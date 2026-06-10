@@ -30,6 +30,22 @@
   .login-btn:hover { background: var(--blue-mid); }
   .login-error { background: var(--red-light); color: var(--red); border-radius: 6px; padding: 9px 12px; font-size: 0.78rem; font-weight: 600; margin-bottom: 16px; }
 
+  /* CHAPTER SELECTOR */
+  .selector-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #0a2e56 0%, #185fa5 60%, #378add 100%); }
+  .selector-card { background: white; border-radius: 16px; padding: 40px 36px; width: 480px; box-shadow: 0 24px 64px rgba(0,0,0,0.3); }
+  .selector-logo { font-family: 'DM Serif Display', serif; font-size: 1.4rem; color: var(--blue); margin-bottom: 4px; text-align: center; }
+  .selector-sub { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 24px; font-weight: 600; text-align: center; }
+  .selector-label { font-size: 0.76rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink); margin-bottom: 12px; }
+  .chapter-select-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; max-height: 320px; overflow-y: auto; }
+  .chapter-select-btn { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 9px; background: var(--cream); cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 0.8rem; font-weight: 500; color: var(--ink); transition: all 0.15s; text-align: left; }
+  .chapter-select-btn:hover { border-color: var(--blue); background: var(--blue-light); color: var(--blue); }
+  .chapter-select-btn.selected { border-color: var(--blue); background: var(--blue); color: white; font-weight: 700; }
+  .selector-confirm-btn { width: 100%; background: var(--blue); color: white; border: none; border-radius: 8px; padding: 13px; font-family: 'DM Sans', sans-serif; font-size: 0.9rem; font-weight: 700; cursor: pointer; text-transform: uppercase; letter-spacing: 0.08em; transition: background 0.15s; }
+  .selector-confirm-btn:hover { background: var(--blue-mid); }
+  .selector-confirm-btn:disabled { background: var(--border); cursor: not-allowed; }
+  .selector-back { background: none; border: none; font-size: 0.76rem; color: var(--muted); cursor: pointer; font-family: 'DM Sans', sans-serif; margin-top: 12px; display: block; width: 100%; text-align: center; }
+  .selector-back:hover { color: var(--blue); }
+
   .loading-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px; }
   .spinner { width: 38px; height: 38px; border: 3px solid var(--blue-light); border-top-color: var(--blue); border-radius: 50%; animation: spin 0.7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -221,13 +237,7 @@ const DOC_REF = doc(db, "chapters", "shared");
 const SESSION_KEY = 'ltf_chapters_session_v1';
 
 const ADMIN_PASSWORD = 'chaptersLTF-admin2025';
-const CHAPTER_PASSWORDS = {
-  'Rutgers University':'rutgers-ltf25','UIUC':'uiuc-ltf25','UNC Chapel Hill':'unc-ltf25',
-  'Emory University':'emory-ltf25','Johns Hopkins University':'hopkins-ltf25',
-  'University of Michigan':'umich-ltf25','University of Chicago':'uchicago-ltf25',
-  'Cornell University':'cornell-ltf25','University of Rochester':'rochester-ltf25',
-  'University of Florida':'florida-ltf25'
-};
+const CHAPTER_PASSWORD = 'ltf-chapters25'; // shared password for all chapter leads
 
 // Default chapters — used only on first load if Firebase is empty
 const DEFAULT_CHAPTERS = [
@@ -263,6 +273,7 @@ function tierLabel(t){ return t?t.charAt(0).toUpperCase()+t.slice(1):''; }
 // ── State ─────────────────────────────────────────────────────
 let state = {
   loading:true, authed:false, isAdmin:false, myChapter:null,
+  selectingChapter:false, // chapter lead just authed, picking their chapter
   loginError:'', view:'overview', currentChapter:null,
   filterStatus:'all', goals:{}, chapters:[], drafts:{},
   saving:false, lastSaved:null, showManage:false
@@ -328,14 +339,41 @@ function canEdit(ch){ return state.isAdmin||state.myChapter===ch; }
 // ── Auth ──────────────────────────────────────────────────────
 window.tryLogin=function(){
   const pw=document.getElementById('pw-input').value.trim();
-  if(pw===ADMIN_PASSWORD){saveSession({isAdmin:true,myChapter:null});state.authed=true;state.isAdmin=true;state.myChapter=null;state.loginError='';render();return;}
-  // check known passwords + any chapter whose name matches a generated pattern
-  const match=Object.entries(CHAPTER_PASSWORDS).find(([,v])=>v===pw);
-  if(match){const ch=match[0];saveSession({isAdmin:false,myChapter:ch});state.authed=true;state.isAdmin=false;state.myChapter=ch;state.loginError='';render();return;}
+  if(pw===ADMIN_PASSWORD){
+    saveSession({isAdmin:true,myChapter:null});
+    state.authed=true;state.isAdmin=true;state.myChapter=null;state.loginError='';render();return;
+  }
+  if(pw===CHAPTER_PASSWORD){
+    // correct chapter password — show chapter selector
+    state.selectingChapter=true;state.loginError='';render();return;
+  }
   state.loginError='Incorrect password. Please try again.';render();
   setTimeout(()=>{const el=document.getElementById('pw-input');if(el){el.value='';el.focus();}},50);
 };
-window.logout=function(){clearSession();state.authed=false;state.isAdmin=false;state.myChapter=null;state.view='overview';state.currentChapter=null;state.showManage=false;render();};
+
+window.selectChapter=function(ch){
+  // toggle selection
+  state._pendingChapter = (state._pendingChapter===ch) ? null : ch;
+  // update button styles without full re-render
+  document.querySelectorAll('.chapter-select-btn').forEach(btn=>{
+    btn.classList.toggle('selected', btn.dataset.ch===state._pendingChapter);
+  });
+  document.getElementById('confirm-chapter-btn').disabled = !state._pendingChapter;
+};
+
+window.confirmChapterSelection=function(){
+  const ch=state._pendingChapter;
+  if(!ch) return;
+  saveSession({isAdmin:false,myChapter:ch});
+  state.authed=true;state.isAdmin=false;state.myChapter=ch;
+  state.selectingChapter=false;state._pendingChapter=null;
+  render();
+};
+
+window.backToLogin=function(){
+  state.selectingChapter=false;state._pendingChapter=null;state.loginError='';render();
+};
+window.logout=function(){clearSession();state.authed=false;state.isAdmin=false;state.myChapter=null;state.view='overview';state.currentChapter=null;state.showManage=false;state.selectingChapter=false;state._pendingChapter=null;render();};
 function saveSession(d){try{sessionStorage.setItem(SESSION_KEY,JSON.stringify(d));}catch(e){}}
 function clearSession(){try{sessionStorage.removeItem(SESSION_KEY);}catch(e){}}
 function loadSession(){try{const s=sessionStorage.getItem(SESSION_KEY);if(s)return JSON.parse(s);}catch(e){}return null;}
@@ -470,6 +508,23 @@ function render(){
   const appEl=document.getElementById('app');
   if(state.loading){appEl.innerHTML=`<div class="loading-wrap"><div class="spinner"></div><div class="loading-text">Loading goals...</div></div>`;return;}
   if(!state.authed){
+    // Chapter selector screen (after entering shared password)
+    if(state.selectingChapter){
+      const chapterBtns=state.chapters.map(ch=>`
+        <button class="chapter-select-btn" data-ch="${esc(ch)}" onclick="selectChapter('${esc(ch)}')" ${state._pendingChapter===ch?'class="chapter-select-btn selected"':''}>
+          ${getTier(ch)?medalSVG(getTier(ch),16):'<span style="width:16px;display:inline-block"></span>'}
+          ${esc(ch)}
+        </button>`).join('');
+      appEl.innerHTML=`<div class="selector-wrap"><div class="selector-card">
+        <div class="selector-logo">Project Level The Field</div>
+        <div class="selector-sub">Select Your Chapter</div>
+        <div class="selector-label">Which chapter are you representing?</div>
+        <div class="chapter-select-grid">${chapterBtns}</div>
+        <button class="selector-confirm-btn" id="confirm-chapter-btn" onclick="confirmChapterSelection()" disabled>Enter Dashboard →</button>
+        <button class="selector-back" onclick="backToLogin()">← Back</button>
+      </div></div>`;
+      return;
+    }
     appEl.innerHTML=`<div class="login-wrap"><div class="login-card">
       <div class="login-logo">Project Level The Field</div>
       <div class="login-sub">Chapter Relations Portal</div>
@@ -686,11 +741,18 @@ function renderGoalBlock(ch,idx,goal,isAdmin,canAddUpdate){
 // ── Init ──────────────────────────────────────────────────────
 async function init(){
   const session=loadSession();
-  if(session){state.authed=true;state.isAdmin=session.isAdmin||false;state.myChapter=session.myChapter||null;}
+  if(session){
+    state.authed=true;state.isAdmin=session.isAdmin||false;state.myChapter=session.myChapter||null;
+  }
   render();
   const raw=await loadData();
   initData(raw);
   state.loading=false;
+  // If chapter lead's chapter was removed, send them back to selector
+  if(state.authed && !state.isAdmin && state.myChapter && !state.chapters.includes(state.myChapter)){
+    state.myChapter=null; state.authed=false; state.selectingChapter=false;
+    clearSession();
+  }
   render();
 }
 
